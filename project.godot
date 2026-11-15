@@ -71,13 +71,16 @@ toggle_cam={
 [physics]
 
 common/physics_ticks_per_second=120
+common/physics_ticks_per_second.web=60
 common/max_physics_steps_per_frame=12
+common/max_physics_steps_per_frame.web=4
 3d/physics_engine="Jolt Physics"
 3d/default_gravity=22.0
 3d/default_linear_damp=0.0
 
 [rendering]
 
+scaling_3d/scale.web=0.75
 rendering_device/driver.windows="d3d12"
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"

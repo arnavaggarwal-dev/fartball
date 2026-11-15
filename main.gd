@@ -34,6 +34,7 @@ const MY_FART_MAX := 2.0  # seconds kept after the fart starts
 const FAN_SLICES := 3
 const MOAN_SPEED := 7.0  # m/s closing speed between you and the opponent that earns a moan
 
+var web := OS.has_feature("web")  # browser build: CPU particles, lighter profile
 var state := "menu"
 var goals_you := 0
 var goals_bot := 0
@@ -63,6 +64,7 @@ var stock_farts := {}  # Sfx player name -> its stock AudioStreamRandomizer
 var recording := false
 var fan_aps: Array[AnimationPlayer] = []
 var fan_slice := 0
+var fans_awake_until := 0  # web: fans only animate while cheering (msec)
 
 @onready var player: Entity = $Player
 @onready var opp: Entity = $Opp
@@ -91,6 +93,8 @@ func _ready() -> void:
 		wins = int(rec[0])
 		losses = int(rec[1]) if rec.size() > 1 else 0
 	crowd_idle()
+	if web:  # browser build: single-threaded wasm + WebGL, trim the costly bits
+		$StadiumLight.shadow_enabled = false
 	for n in MY_FART_PITCH:
 		stock_farts[n] = player.get_node("Sfx/" + n).stream
 	if FileAccess.file_exists(MY_FART_PATH):
@@ -148,6 +152,8 @@ func _input(event: InputEvent) -> void:
 		# first click only grabs the mouse; once captured, left click is the fart charge
 		if live and event.pressed:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	elif event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F3:
+		%Fps.visible = not %Fps.visible
 	elif event.is_action_pressed("ui_cancel"):
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	elif event.is_action_pressed("toggle_cam"):
@@ -212,7 +218,9 @@ func fart(e: Entity, dir: Vector3, charge: float, burst: bool) -> bool:
 
 # ---------- contacts (signals wired in main.tscn) ----------
 func touch_ball(by: Entity) -> void:
-	$Ball/Trail.process_material.color = NEON_TOUCH_YOU if by == player else NEON_TOUCH_BOT
+	var trail_col := NEON_TOUCH_YOU if by == player else NEON_TOUCH_BOT
+	$Ball/Trail.process_material.color = trail_col
+	$Ball/Trail/CPU.color = trail_col
 	ball.last_toucher = by
 	ball.touch_pos = by.global_position
 	ball.wall_since_touch = false
@@ -286,18 +294,25 @@ func ai_update(dt: float) -> void:
 		fart(o, tilt(dir, 0.2), 0, true)
 
 
-# ---------- fart gas + toxic clouds (GPUParticles3D nodes in the scenes) ----------
+# ---------- fart gas + toxic clouds (particle nodes in the scenes) ----------
+## Every effect is a GPUParticles3D with a CPUParticles3D "CPU" twin under it. Browsers
+## compile GPU particle shaders on first use and that froze the whole browser at the
+## first fart, so the web build drives the CPU twins; desktop keeps the GPU gas.
+func fx(effect: Node) -> Node:
+	return effect.get_node("CPU") if web else effect
+
+
 ## Exhaust gas leaves the nozzle opposite the thrust, at a rate proportional to it
 ## (thrust = mass flow x exhaust speed). The particle material does the gas physics:
 ## turbulence, buoyancy, drag, expansion, inherited velocity, floor/ceiling collision.
 func update_exhaust(e: Entity) -> void:
-	var ex: GPUParticles3D = e.get_node("Exhaust")
+	var nozzle: GPUParticles3D = e.get_node("Exhaust")
 	var f := e.thrust.length()
-	ex.emitting = f > 0
+	fx(nozzle).emitting = f > 0
 	if f > 0:
-		ex.amount_ratio = clampf(f / 140.0, 0.2, 1.0)
+		nozzle.amount_ratio = clampf(f / 140.0, 0.2, 1.0)
 		var back := -e.thrust / f
-		ex.look_at(ex.global_position + back, Vector3.UP if absf(back.y) < 0.95 else Vector3.RIGHT)
+		nozzle.look_at(nozzle.global_position + back, Vector3.UP if absf(back.y) < 0.95 else Vector3.RIGHT)
 
 
 # ponytail: 3 cloud nodes; a 4th simultaneous cloud takes over the one closest to expiring
@@ -308,7 +323,7 @@ func spawn_cloud(pos: Vector3, owner: Entity) -> void:
 			best = i
 	var c: GPUParticles3D = clouds[best]
 	c.global_position = Vector3(pos.x, 1.4, pos.z)
-	c.emitting = true
+	fx(c).emitting = true
 	cloud_life(best).start()  # its timeout switches emitting off (wired in main.tscn)
 	cloud_owner[best] = owner
 
@@ -374,7 +389,7 @@ func _on_rec_fart_pressed() -> void:
 	if is_dead_silence(raw):
 		# all zeros = no mic data at all: in a browser the mic permission was refused; on the
 		# Windows desktop build, Godot's WASAPI driver can't read mics reporting >2 channels
-		if OS.has_feature("web"):
+		if web:
 			%FartStatus.text = "Couldn't hear your mic. Allow microphone access for this page and try again"
 		else:
 			%FartStatus.text = "Godot can't read this mic (it reports more than 2 channels).\nSet it to 2 channels: Sound > Recording > Properties > Advanced"
@@ -514,12 +529,15 @@ func crowd_idle() -> void:
 
 
 func update_crowd(dt: float) -> void:
+	if web and Time.get_ticks_msec() > fans_awake_until:
+		return  # skeletons are expensive in wasm: fans hold their pose between cheers
 	fan_slice = (fan_slice + 1) % FAN_SLICES
 	for i in range(fan_slice, fan_aps.size(), FAN_SLICES):
 		fan_aps[i].advance(dt * FAN_SLICES)
 
 
 func crowd_cheer() -> void:
+	fans_awake_until = Time.get_ticks_msec() + 3000
 	for fan in $Crowd.get_children():
 		var ap: AnimationPlayer = fan.get_node("AnimationPlayer")
 		ap.play("emote-yes", 0.15)
@@ -564,8 +582,8 @@ func kickoff() -> void:
 	ball.wall_since_touch = false
 	for i in clouds.size():
 		cloud_life(i).stop()
-		clouds[i].restart()  # clears lingering gas
-		clouds[i].emitting = false
+		fx(clouds[i]).restart()  # clears lingering gas
+		fx(clouds[i]).emitting = false
 
 
 func _on_go_pressed() -> void:
@@ -611,7 +629,7 @@ func goal_scored(side: int) -> void:
 	$GoalTimer.start()
 	$MatchTimer.paused = true
 	$Confetti.global_position = ball.global_position
-	$Confetti.restart()
+	fx($Confetti).restart()
 	%FlashAnim.play("flash")
 	var goals_box: Control = %ScorePunch.get_parent()
 	goals_box.pivot_offset = goals_box.size / 2
@@ -805,8 +823,10 @@ func update_hud(c: float) -> void:
 	%Time.text = "OVERTIME" if overtime else "%d:%02d" % [tl / 60, tl % 60]
 	var urgent := overtime or (state == "play" and tl <= 10)
 	%Time.modulate = Color.WHITE.lerp(Color(1, 0.3, 0.3), 0.5 + 0.5 * sin(Time.get_ticks_msec() / 120.0)) if urgent else Color.WHITE
-	$Ball/Trail.emitting = ball.linear_velocity.length() > 9.0
+	fx($Ball/Trail).emitting = ball.linear_velocity.length() > 9.0
 	%LockHint.visible = state == "play" and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED
 	%ChgLbl.text = "CHARGE · ANGLE %d°" % roundi(rad_to_deg(aim_el()))
 	%Gas.value = player.gas
+	if %Fps.visible:
+		%Fps.text = "%d FPS" % Engine.get_frames_per_second()
 	%Chg.value = c * 100

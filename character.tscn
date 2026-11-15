@@ -140,6 +140,26 @@ visibility_aabb = AABB(-20, -10, -20, 40, 30, 40)
 process_material = SubResource("ExhaustGas")
 draw_pass_1 = ExtResource("8_gas")
 
+[node name="CPU" type="CPUParticles3D" parent="Exhaust"]
+cast_shadow = 0
+emitting = false
+amount = 90
+lifetime = 1.6
+mesh = ExtResource("8_gas")
+direction = Vector3(0, 0, -1)
+spread = 18.0
+gravity = Vector3(0, 1.8, 0)
+initial_velocity_min = 6.0
+initial_velocity_max = 11.0
+angular_velocity_min = -90.0
+angular_velocity_max = 90.0
+damping_min = 3.0
+damping_max = 4.0
+scale_amount_min = 0.5
+scale_amount_max = 0.9
+scale_amount_curve = SubResource("GasGrow")
+color_ramp = SubResource("GasFade")
+
 [node name="Sfx" type="Node3D" parent="."]
 
 [node name="Burst" type="AudioStreamPlayer3D" parent="Sfx"]

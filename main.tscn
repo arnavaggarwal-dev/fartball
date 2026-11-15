@@ -1293,6 +1293,21 @@ visibility_aabb = AABB(-15, -6, -15, 30, 12, 30)
 process_material = SubResource("BallTrail")
 draw_pass_1 = SubResource("TrailBit")
 
+[node name="CPU" type="CPUParticles3D" parent="Ball/Trail"]
+cast_shadow = 0
+emitting = false
+amount = 60
+lifetime = 0.45
+mesh = SubResource("TrailBit")
+emission_shape = 1
+emission_sphere_radius = 0.6
+gravity = Vector3(0, 0, 0)
+scale_amount_min = 0.6
+scale_amount_max = 1.0
+scale_amount_curve = SubResource("TrailShrink")
+color = Color(1, 0.25, 0.75, 1)
+color_ramp = SubResource("TrailFade")
+
 [node name="Mesh" type="MeshInstance3D" parent="Ball"]
 mesh = ExtResource("7_x")
 
@@ -1341,6 +1356,28 @@ draw_pass_1 = ExtResource("gas_puff")
 wait_time = 5.0
 one_shot = true
 
+[node name="CPU" type="CPUParticles3D" parent="Clouds/Cloud1"]
+cast_shadow = 0
+emitting = false
+amount = 45
+lifetime = 2.5
+mesh = ExtResource("gas_puff")
+emission_shape = 1
+emission_sphere_radius = 2.4
+direction = Vector3(0, 1, 0)
+spread = 180.0
+gravity = Vector3(0, 0.3, 0)
+initial_velocity_min = 0.2
+initial_velocity_max = 0.8
+angular_velocity_min = -40.0
+angular_velocity_max = 40.0
+damping_min = 0.6
+damping_max = 1.0
+scale_amount_min = 1.2
+scale_amount_max = 2.2
+scale_amount_curve = SubResource("ToxicGrow")
+color_ramp = SubResource("ToxicFade")
+
 [node name="Cloud2" type="GPUParticles3D" parent="Clouds"]
 cast_shadow = 0
 emitting = false
@@ -1353,6 +1390,28 @@ draw_pass_1 = ExtResource("gas_puff")
 [node name="Life" type="Timer" parent="Clouds/Cloud2"]
 wait_time = 5.0
 one_shot = true
+
+[node name="CPU" type="CPUParticles3D" parent="Clouds/Cloud2"]
+cast_shadow = 0
+emitting = false
+amount = 45
+lifetime = 2.5
+mesh = ExtResource("gas_puff")
+emission_shape = 1
+emission_sphere_radius = 2.4
+direction = Vector3(0, 1, 0)
+spread = 180.0
+gravity = Vector3(0, 0.3, 0)
+initial_velocity_min = 0.2
+initial_velocity_max = 0.8
+angular_velocity_min = -40.0
+angular_velocity_max = 40.0
+damping_min = 0.6
+damping_max = 1.0
+scale_amount_min = 1.2
+scale_amount_max = 2.2
+scale_amount_curve = SubResource("ToxicGrow")
+color_ramp = SubResource("ToxicFade")
 
 [node name="Cloud3" type="GPUParticles3D" parent="Clouds"]
 cast_shadow = 0
@@ -1367,6 +1426,28 @@ draw_pass_1 = ExtResource("gas_puff")
 wait_time = 5.0
 one_shot = true
 
+[node name="CPU" type="CPUParticles3D" parent="Clouds/Cloud3"]
+cast_shadow = 0
+emitting = false
+amount = 45
+lifetime = 2.5
+mesh = ExtResource("gas_puff")
+emission_shape = 1
+emission_sphere_radius = 2.4
+direction = Vector3(0, 1, 0)
+spread = 180.0
+gravity = Vector3(0, 0.3, 0)
+initial_velocity_min = 0.2
+initial_velocity_max = 0.8
+angular_velocity_min = -40.0
+angular_velocity_max = 40.0
+damping_min = 0.6
+damping_max = 1.0
+scale_amount_min = 1.2
+scale_amount_max = 2.2
+scale_amount_curve = SubResource("ToxicGrow")
+color_ramp = SubResource("ToxicFade")
+
 [node name="Confetti" type="GPUParticles3D" parent="."]
 cast_shadow = 0
 emitting = false
@@ -1377,6 +1458,25 @@ explosiveness = 1.0
 visibility_aabb = AABB(-15, -5, -15, 30, 25, 30)
 process_material = SubResource("ConfettiBurst")
 draw_pass_1 = SubResource("ConfettiBit")
+
+[node name="CPU" type="CPUParticles3D" parent="Confetti"]
+cast_shadow = 0
+emitting = false
+amount = 60
+lifetime = 1.8
+one_shot = true
+explosiveness = 1.0
+mesh = SubResource("ConfettiBit")
+direction = Vector3(0, 1, 0)
+spread = 80.0
+gravity = Vector3(0, -12, 0)
+initial_velocity_min = 6.0
+initial_velocity_max = 14.0
+angular_velocity_min = -360.0
+angular_velocity_max = 360.0
+damping_min = 0.5
+damping_max = 1.0
+color_initial_ramp = SubResource("ConfettiColours")
 
 [node name="GasFloor" type="GPUParticlesCollisionBox3D" parent="."]
 position = Vector3(0, -0.5, 0)
@@ -1688,6 +1788,21 @@ libraries = {
 &"": SubResource("CountLib")
 }
 
+[node name="Fps" type="Label" parent="HUD/UI"]
+unique_name_in_owner = true
+visible = false
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -160.0
+offset_top = 96.0
+offset_right = -16.0
+offset_bottom = 124.0
+grow_horizontal = 0
+mouse_filter = 2
+text = "60 FPS"
+horizontal_alignment = 2
+
 [node name="Xhair" type="Panel" parent="HUD/UI"]
 anchors_preset = 8
 anchor_left = 0.5
@@ -1908,3 +2023,6 @@ horizontal_alignment = 1
 [connection signal="pressed" from="HUD/UI/Overlay/Center/V/Buttons/ClearFart" to="Sfx/Click" method="play"]
 [connection signal="animation_finished" from="HUD/UI/Countdown/CountdownAnim" to="." method="_on_countdown_finished"]
 [connection signal="timeout" from="HitStop" to="." method="_on_hit_stop_timeout"]
+[connection signal="timeout" from="Clouds/Cloud1/Life" to="Clouds/Cloud1/CPU" method="set_emitting" binds= [false]]
+[connection signal="timeout" from="Clouds/Cloud2/Life" to="Clouds/Cloud2/CPU" method="set_emitting" binds= [false]]
+[connection signal="timeout" from="Clouds/Cloud3/Life" to="Clouds/Cloud3/CPU" method="set_emitting" binds= [false]]
