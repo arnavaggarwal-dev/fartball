@@ -1,0 +1,13 @@
+[gd_resource type="SphereMesh" format=3]
+
+[sub_resource type="StandardMaterial3D" id="GasMat"]
+transparency = 1
+vertex_color_use_as_albedo = true
+roughness = 0.9
+
+[resource]
+material = SubResource("GasMat")
+radius = 0.5
+height = 1.0
+radial_segments = 8
+rings = 4

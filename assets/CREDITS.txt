@@ -1,0 +1,15 @@
+Fartball third-party assets (downloaded 2026-11-15). All CC0 / public domain except the font (SIL OFL 1.1).
+
+models/crowd/character-*.glb, Textures/colormap.png  Kenney "Mini Characters"  https://kenney.nl/assets/mini-characters  CC0
+models/stadium/grandStand.glb, lightPostLarge.glb    Kenney "Racing Kit"       https://kenney.nl/assets/racing-kit       CC0
+models/goal/soccer_goal.glb (converted from soccerGoalNormal.blend)  "soccerGoal" by almaPerdida  https://opengameart.org/content/soccergoal  CC0
+textures/grass/Grass005_*                            ambientCG Grass005        https://ambientcg.com/view?id=Grass005     CC0
+audio/crowd/crowd_cheer.mp3      "Crowd Cheer 2" by Krizin                    https://freesound.org/people/Krizin/sounds/651642/  CC0
+audio/crowd/crowd_ambience.mp3   Norwegian football match ambience by Vogyik  https://freesound.org/people/Vogyik/sounds/868982/  CC0
+audio/sfx/airhorn.mp3            "Airhorn" by jacksonacademyashmore           https://freesound.org/people/jacksonacademyashmore/sounds/414208/  CC0
+audio/sfx/whistle.mp3            referee whistle by SpliceSound               https://freesound.org/s/218318/  CC0
+audio/sfx/kick_*.ogg, bounce_*.ogg  Kenney "Impact Sounds"                    https://kenney.nl/assets/impact-sounds     CC0
+audio/sfx/click.ogg              Kenney "Interface Sounds"                    https://kenney.nl/assets/interface-sounds  CC0
+audio/music/fever_stadium.ogg    "Fever Stadium"                              https://opengameart.org/content/fever-stadium  CC0
+fonts/LilitaOne-Regular.ttf      Lilita One by Juan Montoreano                https://github.com/google/fonts/tree/main/ofl/lilitaone  SIL OFL 1.1 (fonts/OFL.txt)
+sfx/source/gastricdistress_bylfa_0.wav  "Gastric Distress" by LFA             https://opengameart.org/content/gastric-distress  CC0

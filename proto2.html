@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fartball prototype</title>
+<link href="https://fonts.googleapis.com/css2?family=Lilita+One&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#8fd3ff;font-family:'Lilita One',system-ui,sans-serif;color:#fff;user-select:none}
+  canvas{display:block}
+  #hud{position:fixed;top:12px;left:12px;right:12px;display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none;text-shadow:0 2px 0 #0006;letter-spacing:.5px}
+  .box{background:#1a2b12cc;padding:8px 14px;border-radius:10px;font-size:18px;line-height:1.35}
+  .big{font-size:30px}
+  .you{color:#ffb347}.bot{color:#c99bff}
+  #mid{text-align:center}
+  #mod{margin-top:6px;font-size:15px;color:#d8ff6a;min-height:18px}
+  #meter{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);width:340px;pointer-events:none}
+  .lbl{font-size:13px;text-shadow:0 1px 0 #0008;margin:0 0 3px 4px}
+  .bar{height:16px;background:#0008;border:2px solid #ffffff40;border-radius:10px;overflow:hidden;margin-bottom:6px}
+  #gas{height:100%;width:100%;background:linear-gradient(90deg,#5fa827,#c4f04a)}
+  #chg{height:100%;width:0;background:linear-gradient(90deg,#ffd447,#ff5a2a)}
+  #banner{position:fixed;top:34%;left:0;right:0;text-align:center;font-size:96px;color:#d8ff6a;text-shadow:0 6px 0 #2d5a10,0 10px 30px #0008;pointer-events:none;opacity:0;transform:scale(.6);transition:all .25s}
+  #banner.on{opacity:1;transform:scale(1)}
+  #pops{position:fixed;top:52%;left:0;right:0;text-align:center;pointer-events:none}
+  .pop{font-size:28px;color:#fff;text-shadow:0 3px 0 #0008;animation:up 1.6s ease-out forwards}
+  @keyframes up{0%{opacity:0;transform:translateY(20px) scale(.8)}15%{opacity:1;transform:none}80%{opacity:1}100%{opacity:0;transform:translateY(-50px)}}
+  #overlay{position:fixed;inset:0;background:#132010e0;display:flex;align-items:center;justify-content:center;flex-direction:column;text-align:center}
+  #overlay h1{font-size:84px;margin:0;color:#d8ff6a;text-shadow:0 6px 0 #3c6e14}
+  #overlay p{font-family:system-ui,sans-serif;font-size:16px;max-width:520px;color:#e6f2d9;line-height:1.5}
+  .keys{display:grid;grid-template-columns:auto auto;gap:6px 18px;font-family:system-ui,sans-serif;font-size:15px;text-align:left;margin:10px 0 22px}
+  kbd{background:#fff;color:#222;border-radius:5px;padding:1px 7px;font-weight:700;box-shadow:0 2px 0 #999}
+  button{font-family:'Lilita One',sans-serif;font-size:28px;background:#d8ff6a;color:#21400c;border:0;border-radius:14px;padding:12px 38px;cursor:pointer;box-shadow:0 5px 0 #6d9a2a}
+  button:active{transform:translateY(3px);box-shadow:0 2px 0 #6d9a2a}
+</style>
+</head>
+<body>
+<div id="hud">
+  <div class="box">SCORE <span class="big" id="score">0</span><br><span id="mult">x1 combo</span></div>
+  <div class="box" id="mid"><span class="big"><span class="you" id="gy">0</span> – <span class="bot" id="gb">0</span></span><br><span id="time">1:30</span><div id="mod"></div></div>
+  <div class="box" style="text-align:right">vs <span class="bot" id="oppname">The Camper</span><br>BEST <span id="best">0</span></div>
+</div>
+<div id="meter">
+  <div class="lbl">GAS</div><div class="bar"><div id="gas"></div></div>
+  <div class="lbl">CHARGE · ANGLE <span id="ang">20°</span></div><div class="bar"><div id="chg"></div></div>
+</div>
+<div id="banner">GOAL!</div>
+<div id="xhair" style="position:fixed;top:50%;left:50%;width:18px;height:18px;margin:-9px 0 0 -9px;border:2px solid #fffc;border-radius:50%;pointer-events:none;box-shadow:0 0 0 1px #0005"></div>
+<div id="lockhint" style="position:fixed;top:45%;left:0;right:0;text-align:center;font-size:26px;text-shadow:0 2px 0 #0008;pointer-events:none;display:none">Click to capture mouse</div>
+<div id="pops"></div>
+<div id="overlay">
+  <h1>FARTBALL 💨</h1>
+  <p>You are the projectile. Walking is painfully slow; real movement comes from the other end. Launch yourself into the ball and get it into the <b style="color:#c99bff">purple goal</b>. Defend the orange one.</p>
+  <div class="keys">
+    <span><kbd>Mouse</kbd></span><span>Look / aim in 3D — up = lob, down = drive (captured — <kbd>Esc</kbd> to release)</span>
+    <span><kbd>Hold Space</kbd></span><span>Charge a fart, release to launch</span>
+    <span><kbd>Shift</kbd></span><span>Quick burst (works mid-air)</span>
+    <span><kbd>WASD</kbd></span><span>Shuffle around, very slowly (camera-relative)</span>
+    <span><kbd>V</kbd></span><span>Toggle chase cam / first person</span>
+  </div>
+  <p id="endtxt" style="font-family:'Lilita One';font-size:26px;color:#fff"></p>
+  <button id="go">KICK OFF</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const V3 = THREE.Vector3, $ = id => document.getElementById(id);
+const W = 20, D = 12, GOAL_HW = 4, GOAL_H = 4.5, POCKET = 3, MATCH_TIME = 90;
+let G = 22, ballFric = 0.6, playerFric = 2.5;
+
+// ---------- renderer / scene ----------
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fd3ff);
+scene.fog = new THREE.Fog(0x8fd3ff, 70, 130);
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 200);
+addEventListener('resize', () => { camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x4a6b2a, 0.85));
+const sun = new THREE.DirectionalLight(0xfff4e0, 0.85);
+sun.position.set(10, 30, 15); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, {left:-28, right:28, top:22, bottom:-22, near:1, far:80});
+scene.add(sun);
+
+const std = (color, o={}) => new THREE.MeshStandardMaterial(Object.assign({color, flatShading:true, roughness:.75}, o));
+function addMesh(geo, mat, x, y, z, shadow=true){ const m = new THREE.Mesh(geo, mat); m.position.set(x,y,z); m.castShadow = shadow; m.receiveShadow = true; scene.add(m); return m; }
+
+// ---------- pitch ----------
+(function buildArena(){
+  const c = document.createElement('canvas'); c.width = 1024; c.height = 614; const g = c.getContext('2d');
+  for (let i = 0; i < 10; i++){ g.fillStyle = i%2 ? '#4caf3f' : '#43a136'; g.fillRect(i*102.4, 0, 103, 614); }
+  const u = 1024/40; g.strokeStyle = '#ffffffcc'; g.lineWidth = 6;
+  g.strokeRect(4, 4, 1016, 606);
+  g.beginPath(); g.moveTo(512, 4); g.lineTo(512, 610); g.stroke();
+  g.beginPath(); g.arc(512, 307, 3.2*u, 0, 7); g.stroke();
+  g.strokeRect(4, 307-8*u, 5*u, 16*u); g.strokeRect(1020-5*u, 307-8*u, 5*u, 16*u);
+  const tex = new THREE.CanvasTexture(c); tex.anisotropy = 4;
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(2*W, 2*D), new THREE.MeshStandardMaterial({map:tex, roughness:.95}));
+  floor.rotation.x = -Math.PI/2; floor.receiveShadow = true; scene.add(floor);
+  const apron = new THREE.Mesh(new THREE.PlaneGeometry(140, 100), std(0x3b7a2d, {flatShading:false}));
+  apron.rotation.x = -Math.PI/2; apron.position.y = -0.02; apron.receiveShadow = true; scene.add(apron);
+
+  const boardMats = [std(0xff4f4f), std(0xffd23f), std(0x3fa9ff), std(0xff8a1f)];
+  const glass = new THREE.MeshStandardMaterial({color:0xddf3ff, transparent:true, opacity:.18, depthWrite:false});
+  const BH = 1.2, GH = 6;
+  // long walls (skip the camera-side glass so it never blocks the view)
+  for (const s of [-1, 1]){
+    for (let i = 0; i < 8; i++) addMesh(new THREE.BoxGeometry(5, BH, .5), boardMats[(i + (s>0?2:0)) % 4], -W + 2.5 + i*5, BH/2, s*(D+.25));
+    addMesh(new THREE.BoxGeometry(2*W, GH-BH, .2), glass, 0, BH + (GH-BH)/2, s*(D+.25), false);
+  }
+  // end walls with goal mouths
+  for (const s of [-1, 1]){
+    for (const zs of [-1, 1]){
+      const len = D - GOAL_HW, zc = zs*(GOAL_HW + len/2);
+      addMesh(new THREE.BoxGeometry(.5, BH, len), boardMats[s>0?1:0], s*(W+.25), BH/2, zc);
+      addMesh(new THREE.BoxGeometry(.2, GH-BH, len), glass, s*(W+.25), BH + (GH-BH)/2, zc, false);
+    }
+    addMesh(new THREE.BoxGeometry(.2, GH-GOAL_H, 2*GOAL_HW), glass, s*(W+.25), GOAL_H + (GH-GOAL_H)/2, 0, false);
+    // posts + crossbar
+    const post = std(0xffffff, {roughness:.4});
+    for (const zs of [-1, 1]) addMesh(new THREE.CylinderGeometry(.18, .18, GOAL_H, 10), post, s*W, GOAL_H/2, zs*GOAL_HW);
+    const bar = addMesh(new THREE.CylinderGeometry(.18, .18, 2*GOAL_HW, 10), post, s*W, GOAL_H, 0); bar.rotation.x = Math.PI/2;
+    // net
+    const netCol = s > 0 ? 0xc99bff : 0xffb347;
+    const net = new THREE.Mesh(new THREE.BoxGeometry(POCKET, GOAL_H, 2*GOAL_HW, 4, 5, 10), new THREE.MeshBasicMaterial({color:netCol, wireframe:true, transparent:true, opacity:.55}));
+    net.position.set(s*(W + POCKET/2), GOAL_H/2, 0); scene.add(net);
+    const pad = addMesh(new THREE.PlaneGeometry(POCKET, 2*GOAL_HW), std(netCol, {transparent:true, opacity:.35}), s*(W + POCKET/2), .01, 0, false);
+    pad.rotation.x = -Math.PI/2;
+  }
+})();
+
+// ---------- crowd (far side + ends) ----------
+const crowdN = 360, crowd = new THREE.InstancedMesh(new THREE.BoxGeometry(.7, 1.1, .7), std(0xffffff), crowdN);
+const fans = []; const dummy = new THREE.Object3D();
+for (let i = 0; i < crowdN; i++){
+  let x, z, row = i % 4;
+  if (i < 240){ x = -W - 2 + Math.random()*(2*W + 4); z = -(D + 2.2 + row*1.4); }
+  else { const s = i < 300 ? -1 : 1; x = s*(W + POCKET + 2.5 + row*1.4); z = -D + Math.random()*2*D; }
+  fans.push({x, y: .55 + row*.9, z, ph: Math.random()*6.28});
+  crowd.setColorAt(i, new THREE.Color().setHSL(Math.random(), .7, .55));
+}
+for (let r = 0; r < 4; r++){
+  addMesh(new THREE.BoxGeometry(2*W + 8, .9*r + .4, 1.4), std(0x777f88), 0, (.9*r + .4)/2, -(D + 2.2 + r*1.4), false);
+}
+crowd.castShadow = true; scene.add(crowd);
+let cheer = 0;
+function updateCrowd(t){
+  for (let i = 0; i < crowdN; i++){
+    const f = fans[i], hop = Math.max(0, Math.sin(t*(cheer>0?14:3) + f.ph)) * (cheer > 0 ? .7 : .08);
+    dummy.position.set(f.x, f.y + hop, f.z); dummy.updateMatrix(); crowd.setMatrixAt(i, dummy.matrix);
+  }
+  crowd.instanceMatrix.needsUpdate = true;
+}
+
+// ---------- characters ----------
+function makeChar(color){
+  const root = new THREE.Group(), inner = new THREE.Group(); root.add(inner);
+  const mat = std(color), skin = std(0xffd2a6), white = std(0xffffff, {flatShading:false}), black = std(0x111111, {flatShading:false});
+  const part = (geo, m, x, y, z, sx=1, sy=1, sz=1) => { const p = new THREE.Mesh(geo, m); p.position.set(x,y,z); p.scale.set(sx,sy,sz); p.castShadow = true; inner.add(p); return p; };
+  part(new THREE.IcosahedronGeometry(.72, 1), mat, 0, -.2, 0, 1, .9, 1);
+  part(new THREE.IcosahedronGeometry(.36, 1), mat, -.5, -.4, .27);   // cheeks
+  part(new THREE.IcosahedronGeometry(.36, 1), mat, -.5, -.4, -.27);
+  part(new THREE.IcosahedronGeometry(.8, 1), skin, .05, .85, 0);       // big head
+  for (const zs of [-1, 1]){
+    part(new THREE.SphereGeometry(.22, 12, 10), white, .66, .98, zs*.27);
+    part(new THREE.SphereGeometry(.1, 10, 8), black, .86, .98, zs*.27);
+  }
+  const mouth = part(new THREE.SphereGeometry(.16, 10, 8), std(0x5a1a1a, {flatShading:false}), .74, .58, 0, .5, .6, 1.4);
+  scene.add(root);
+  return {root, inner, mouth};
+}
+
+function makeEntity(type, r, m, rest){
+  return {type, r, m, rest, pos:new V3(), vel:new V3(), grounded:false, gas:100, cd:0, aim:new V3(1,0,0), squash:0, walk:new V3()};
+}
+const player = Object.assign(makeEntity('player', .85, 1, .3), makeChar(0xff8a1f));
+const opp = Object.assign(makeEntity('bot', .85, 1, .3), makeChar(0x8e5bff));
+opp.root.rotation.y = Math.PI;
+
+// ball
+const ball = makeEntity('ball', 1, .5, .78);
+ball.mesh = (() => {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 128; const g = c.getContext('2d');
+  g.fillStyle = '#fafafa'; g.fillRect(0, 0, 256, 128); g.fillStyle = '#1b1b1b';
+  for (let y = 0; y < 4; y++) for (let x = 0; x < 8; x++){
+    const cx = x*32 + (y%2)*16 + 8, cy = y*32 + 16; g.beginPath();
+    for (let k = 0; k < 5; k++){ const a = k/5*6.283 - 1.57; g.lineTo(cx + Math.cos(a)*9, cy + Math.sin(a)*9*(1 + Math.abs(cy-64)/64)); }
+    g.fill();
+  }
+  const m = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 2), new THREE.MeshStandardMaterial({map:new THREE.CanvasTexture(c), roughness:.5, flatShading:true}));
+  m.castShadow = true; scene.add(m); return m;
+})();
+const ents = [player, opp, ball];
+
+// aim arrow
+const arrow = (() => {
+  const s = new THREE.Shape(); s.moveTo(0, -.18); s.lineTo(1.6, -.18); s.lineTo(1.6, -.45); s.lineTo(2.4, 0); s.lineTo(1.6, .45); s.lineTo(1.6, .18); s.lineTo(0, .18);
+  const geo = new THREE.ShapeGeometry(s); geo.rotateX(-Math.PI/2);
+  const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({color:0xffe14a, transparent:true, opacity:.75, depthWrite:false}));
+  scene.add(m); return m;
+})();
+
+// trajectory preview
+const TRAJ_N = 70, trajGeo = new THREE.BufferGeometry();
+trajGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAJ_N*3), 3));
+const traj = new THREE.Line(trajGeo, new THREE.LineDashedMaterial({color:0xffe14a, dashSize:.45, gapSize:.3, transparent:true, opacity:.9, depthWrite:false}));
+traj.frustumCulled = false; scene.add(traj);
+const landRing = new THREE.Mesh(new THREE.RingGeometry(.5, .75, 24), new THREE.MeshBasicMaterial({color:0xffe14a, transparent:true, opacity:.8, side:THREE.DoubleSide, depthWrite:false}));
+landRing.rotation.x = -Math.PI/2; scene.add(landRing);
+function updateTraj(charge){
+  const d = aim3(), v = player.vel.clone(), p = player.pos.clone(), arr = trajGeo.attributes.position.array;
+  if (d.y > 0) v.y = Math.max(v.y, 0);
+  v.addScaledVector(d, fartPower(charge, false)); if (player.grounded && v.y < 1.5) v.y = 1.5;
+  let n = 0, landed = false;
+  for (; n < TRAJ_N; n++){
+    arr[n*3] = p.x; arr[n*3+1] = p.y; arr[n*3+2] = p.z;
+    v.y -= G*.035; p.addScaledVector(v, .035); v.x *= .995; v.z *= .995;
+    if (p.y < player.r){ p.y = player.r; landed = true; n++; arr[n*3] = p.x; arr[n*3+1] = p.y; arr[n*3+2] = p.z; n++; break; }
+    if (Math.abs(p.z) > D || Math.abs(p.x) > W + POCKET) { n++; break; }
+  }
+  trajGeo.setDrawRange(0, Math.min(n, TRAJ_N)); trajGeo.attributes.position.needsUpdate = true; traj.computeLineDistances();
+  landRing.visible = landed; landRing.position.set(p.x, .06, p.z);
+}
+
+// ---------- particles + toxic clouds ----------
+const puffGeo = new THREE.IcosahedronGeometry(1, 0), puffs = []; let puffI = 0;
+for (let i = 0; i < 260; i++){
+  const m = new THREE.Mesh(puffGeo, std(0x9be03a, {transparent:true, opacity:0, depthWrite:false}));
+  m.visible = false; scene.add(m); puffs.push({m, life:0, max:1, size:1, vel:new V3()});
+}
+function puff(pos, vel, size, life, color=0x9be03a){
+  const p = puffs[puffI++ % puffs.length];
+  p.m.position.copy(pos); p.vel.copy(vel); p.life = p.max = life; p.size = size; p.m.material.color.setHex(color); p.m.visible = true;
+}
+function updatePuffs(dt){
+  for (const p of puffs){
+    if (!p.m.visible) continue;
+    p.life -= dt; if (p.life <= 0){ p.m.visible = false; continue; }
+    p.m.position.addScaledVector(p.vel, dt); p.vel.multiplyScalar(Math.exp(-3*dt)); p.vel.y += 1.2*dt;
+    const k = p.life/p.max; p.m.scale.setScalar(p.size*(.35 + (1-k)*1.3)); p.m.material.opacity = .75*k; p.m.rotation.x += dt; p.m.rotation.y += dt*1.3;
+  }
+}
+const clouds = [];
+function spawnCloud(pos, owner){
+  const m = new THREE.Mesh(new THREE.IcosahedronGeometry(3, 1), std(0x8fdc2a, {transparent:true, opacity:.22, depthWrite:false}));
+  m.position.set(pos.x, 1.4, pos.z); scene.add(m);
+  clouds.push({pos:m.position, r:3.2, t:5, owner, m});
+}
+function updateClouds(dt){
+  for (let i = clouds.length-1; i >= 0; i--){
+    const c = clouds[i]; c.t -= dt;
+    c.m.scale.setScalar(1 + Math.sin(c.t*6)*.05); c.m.rotation.y += dt*.4; c.m.material.opacity = .22*Math.min(1, c.t);
+    if (Math.random() < dt*12) puff(c.pos.clone().add(new V3((Math.random()-.5)*4, Math.random()*1.5-1, (Math.random()-.5)*4)), new V3(0, .5, 0), .7, 1.4, 0x7cc71e);
+    if (c.t <= 0){ scene.remove(c.m); clouds.splice(i, 1); }
+  }
+}
+const inCloud = e => clouds.some(c => c.owner !== e && e.pos.distanceTo(c.pos) < c.r);
+
+// ---------- audio ----------
+let ac = null, noiseBuf = null;
+function initAudio(){
+  if (ac) return; try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){ return; }
+  noiseBuf = ac.createBuffer(1, ac.sampleRate*2, ac.sampleRate); const d = noiseBuf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random()*2 - 1;
+}
+function fartSound(charge, burst, vol=1){
+  if (!ac) return; const t = ac.currentTime, dur = burst ? .14 : .22 + .7*charge;
+  const out = ac.createGain(); out.gain.setValueAtTime(0, t); out.gain.linearRampToValueAtTime(.32*vol, t+.02);
+  out.gain.setValueAtTime(.32*vol, t + dur*.7); out.gain.exponentialRampToValueAtTime(.001, t + dur);
+  const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 700 + 400*Math.random(); lp.Q.value = 4;
+  out.connect(ac.destination); lp.connect(out);
+  const o = ac.createOscillator(); o.type = 'sawtooth'; const f0 = burst ? 150 : 115 - 45*charge + Math.random()*20;
+  o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f0*.55, t + dur);
+  const lfo = ac.createOscillator(), lg = ac.createGain(); lfo.frequency.value = 14 + Math.random()*16; lg.gain.value = f0*.4;
+  lfo.connect(lg); lg.connect(o.frequency); o.connect(lp);
+  const n = ac.createBufferSource(); n.buffer = noiseBuf; const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 350; bp.Q.value = 1.5;
+  const ng = ac.createGain(); ng.gain.value = .5; n.connect(bp); bp.connect(ng); ng.connect(lp);
+  [o, lfo, n].forEach(s => { s.start(t); s.stop(t + dur + .05); });
+}
+function roar(){
+  if (!ac) return; const t = ac.currentTime;
+  const n = ac.createBufferSource(); n.buffer = noiseBuf; const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = .8;
+  bp.frequency.setValueAtTime(500, t); bp.frequency.linearRampToValueAtTime(1300, t+.4); bp.frequency.linearRampToValueAtTime(700, t+1.8);
+  const g = ac.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.35, t+.15); g.gain.exponentialRampToValueAtTime(.001, t+1.9);
+  n.connect(bp); bp.connect(g); g.connect(ac.destination); n.start(t); n.stop(t+2);
+  [523, 659, 784].forEach((f, i) => { const o = ac.createOscillator(), og = ac.createGain(); o.type = 'square'; o.frequency.value = f;
+    og.gain.setValueAtTime(0, t+i*.1); og.gain.linearRampToValueAtTime(.08, t+i*.1+.02); og.gain.exponentialRampToValueAtTime(.001, t+i*.1+.3);
+    o.connect(og); og.connect(ac.destination); o.start(t+i*.1); o.stop(t+i*.1+.32); });
+}
+function thud(v){
+  if (!ac) return; const t = ac.currentTime, o = ac.createOscillator(), g = ac.createGain();
+  o.frequency.setValueAtTime(180, t); o.frequency.exponentialRampToValueAtTime(60, t+.12);
+  g.gain.setValueAtTime(Math.min(.3, v*.02), t); g.gain.exponentialRampToValueAtTime(.001, t+.15);
+  o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t+.16);
+}
+
+// ---------- fart! ----------
+let camShake = 0;
+const fartPower = (charge, burst) => burst ? 9 : 8 + 18*charge;
+function fart(e, dir, charge, burst){
+  const cost = burst ? 12 : 12 + 38*charge;
+  if (e.gas < cost){ if (e === player) popup('out of gas…'); return false; }
+  e.gas -= cost;
+  if (dir.y > 0) e.vel.y = Math.max(e.vel.y, 0);
+  e.vel.addScaledVector(dir, fartPower(charge, burst));
+  if (e.grounded && e.vel.y < 1.5) e.vel.y = 1.5;
+  e.vel.y = Math.max(e.vel.y, -20);
+  e.squash = 1;
+  const origin = e.pos.clone().addScaledVector(dir, -e.r*.8); origin.y = Math.max(.3, e.pos.y - .3);
+  // rear blast pushes whatever is behind you
+  const reach = burst ? 3 : 4 + 2*charge;
+  for (const o of ents){
+    if (o === e) continue;
+    const v = o.pos.clone().sub(origin), d = v.length();
+    if (d < reach && v.dot(dir) < .3*d){
+      const push = (1 - d/reach)*(burst ? 5 : 5 + 11*charge)/o.m*.5;
+      v.normalize(); o.vel.addScaledVector(v, push); o.vel.y += push*.3;
+      if (o === ball) touchBall(e);
+    }
+  }
+  const n = burst ? 6 : 10 + Math.round(22*charge);
+  for (let i = 0; i < n; i++){
+    const spread = new V3((Math.random()-.5), Math.random()*.6, (Math.random()-.5)).multiplyScalar(4);
+    puff(origin, dir.clone().multiplyScalar(-(4 + 9*charge*Math.random())).add(spread), .25 + .45*charge*Math.random() + .15, .6 + .8*charge);
+  }
+  if (!burst && charge > .95){ spawnCloud(origin, e); if (e === player) popup('TOXIC CLOUD'); }
+  if (!burst && charge > .6) camShake = .25 + .35*charge;
+  fartSound(charge, burst, e === player ? 1 : .55);
+  return true;
+}
+
+// ---------- physics ----------
+function collideArena(e){
+  e.grounded = false;
+  if (e.pos.y < e.r){
+    e.pos.y = e.r;
+    if (e.vel.y < 0){ if (e === ball && e.vel.y < -4) thud(-e.vel.y); e.vel.y *= -e.rest; if (Math.abs(e.vel.y) < 1.2) e.vel.y = 0; }
+    e.grounded = true;
+  } else if (e.pos.y < e.r + .03 && Math.abs(e.vel.y) < .5) e.grounded = true;
+  if (e.pos.y > 14 - e.r){ e.pos.y = 14 - e.r; if (e.vel.y > 0) e.vel.y *= -.5; }
+  for (const s of [-1, 1]){
+    if (s*e.pos.z > D - e.r){ e.pos.z = s*(D - e.r); if (s*e.vel.z > 0){ e.vel.z *= -.8; hitWall(e); } }
+  }
+  for (const s of [-1, 1]){
+    const x = s*e.pos.x;
+    if (x <= W - e.r) continue;
+    if (x > W){ // inside goal pocket
+      if (Math.abs(e.pos.z) > GOAL_HW - e.r){ e.pos.z = Math.sign(e.pos.z)*(GOAL_HW - e.r); e.vel.z *= -.3; }
+      if (e.pos.y > GOAL_H - e.r){ e.pos.y = GOAL_H - e.r; if (e.vel.y > 0) e.vel.y *= -.3; }
+      if (x > W + POCKET - e.r){ e.pos.x = s*(W + POCKET - e.r); if (s*e.vel.x > 0) e.vel.x *= -.2; }
+    } else {
+      const mouth = Math.abs(e.pos.z) < GOAL_HW - e.r*.5 && e.pos.y < GOAL_H;
+      if (!mouth){ e.pos.x = s*(W - e.r); if (s*e.vel.x > 0){ e.vel.x *= -.8; hitWall(e); } }
+    }
+  }
+}
+function hitWall(e){ if (e === ball){ ball.wallSinceTouch = true; if (ball.vel.length() > 5) thud(ball.vel.length()); } }
+function touchBall(by){ ball.lastToucher = by; ball.touchPos = by.pos.clone(); ball.wallSinceTouch = false; }
+
+function collide(a, b){
+  const d = b.pos.clone().sub(a.pos), dist = d.length(), min = a.r + b.r;
+  if (dist >= min || dist < 1e-5) return 0;
+  const n = d.divideScalar(dist), overlap = min - dist, tm = a.m + b.m;
+  a.pos.addScaledVector(n, -overlap*b.m/tm); b.pos.addScaledVector(n, overlap*a.m/tm);
+  const rv = b.vel.clone().sub(a.vel).dot(n);
+  if (rv >= 0) return 0;
+  const j = -(1 + .85)*rv/(1/a.m + 1/b.m);
+  a.vel.addScaledVector(n, -j/a.m); b.vel.addScaledVector(n, j/b.m);
+  return -rv;
+}
+
+function step(dt){
+  for (const e of ents){
+    e.vel.y -= G*dt;
+    if (e !== ball){
+      if (e.grounded && e.walk.lengthSq() > 0 && Math.hypot(e.vel.x, e.vel.z) < 3.6) e.vel.addScaledVector(e.walk, 22*dt);
+      if (e.grounded){ const f = Math.exp(-playerFric*dt); e.vel.x *= f; e.vel.z *= f; }
+      else { const f = Math.exp(-.15*dt); e.vel.x *= f; e.vel.z *= f; }
+      if (inCloud(e)){ const f = Math.exp(-2.5*dt); e.vel.x *= f; e.vel.z *= f; }
+    } else {
+      const f = Math.exp(-(e.grounded ? ballFric : .08)*dt); e.vel.x *= f; e.vel.z *= f;
+    }
+    e.pos.addScaledVector(e.vel, dt);
+    collideArena(e);
+  }
+  for (const p of [player, opp]){
+    const hit = collide(p, ball);
+    if (hit > 0){ touchBall(p); if (hit > 4) thud(hit); }
+  }
+  const slam = collide(player, opp);
+  if (slam > 9 && state === 'play' && slamCd <= 0){ addScore(50, 'BODY SLAM'); thud(slam); slamCd = 1; }
+}
+
+// ---------- AI ----------
+const TIERS = ['The Camper', 'The Psycho', 'The Professional', 'The Menace'];
+let diff = .25;
+function aiUpdate(dt){
+  const o = opp, b = ball.pos; o.cd -= dt;
+  let aim;
+  if (b.x > o.pos.x + .5){ // ball is goal-side of the bot: get around it
+    aim = new V3(b.x + ball.r + 1.8, 0, b.z + (o.pos.z > b.z ? 1.8 : -1.8));
+  } else {
+    const tgt = new V3(-W - 1, 0, 0), away = new V3(b.x - tgt.x, 0, b.z - tgt.z).normalize();
+    aim = new V3(b.x, 0, b.z).addScaledVector(away, ball.r*.6);
+  }
+  if (diff < .35 && b.x < -4){ aim = new V3(W - 4, 0, b.z*.4); } // camper hangs back when ball is far away
+  const dir = new V3(aim.x - o.pos.x, 0, aim.z - o.pos.z), dist = dir.length(); dir.normalize();
+  o.aim.copy(dir); o.walk.copy(dir);
+  if (o.cd <= 0 && o.grounded && dist > 1.3){
+    const charge = Math.min(1, dist/17)*(.55 + .45*diff);
+    if (fart(o, tilt(dir, .38), charge, false)) o.cd = 2.4 - 1.7*diff + Math.random()*.6;
+    else o.cd = .4;
+  }
+  if (!o.grounded && o.vel.y < 0 && diff > .5 && o.gas > 40 && Math.random() < dt*diff*1.5) fart(o, tilt(dir, .2), 0, true);
+}
+function tilt(h, el){ return new V3(h.x*Math.cos(el), Math.sin(el), h.z*Math.cos(el)); }
+
+// ---------- game state ----------
+let state = 'menu', timeLeft = MATCH_TIME, score = 0, goalsYou = 0, goalsBot = 0, streak = 0, slamCd = 0, goalTimer = 0, timeScale = 1, modifier = null;
+let best = 0; try { best = +localStorage.getItem('fartball-best') || 0; } catch(e){}
+$('best').textContent = best;
+const MODS = ['LOW GRAVITY', 'GIANT BALL', 'SLIPPERY PITCH'];
+function applyModifier(m){
+  modifier = m; G = m === 'LOW GRAVITY' ? 9 : 22;
+  ball.r = m === 'GIANT BALL' ? 2 : 1; ball.m = m === 'GIANT BALL' ? .8 : .5; ball.mesh.scale.setScalar(ball.r);
+  ballFric = m === 'SLIPPERY PITCH' ? .03 : .6; playerFric = m === 'SLIPPERY PITCH' ? .5 : 2.5;
+  $('mod').textContent = m ? '⚠ ' + m : '';
+}
+function kickoff(){
+  player.pos.set(-8, player.r, 0); player.vel.set(0, 0, 0); player.gas = 100;
+  opp.pos.set(8, opp.r, 0); opp.vel.set(0, 0, 0); opp.gas = 100; opp.cd = 1.2;
+  ball.pos.set(0, 6, 0); ball.vel.set(0, 0, 0); ball.lastToucher = null; ball.wallSinceTouch = false;
+  clouds.forEach(c => scene.remove(c.m)); clouds.length = 0;
+}
+function startMatch(){
+  initAudio(); if (ac && ac.state === 'suspended') ac.resume();
+  yaw = 0; pitch = .35; timeLeft = MATCH_TIME; score = 0; goalsYou = 0; goalsBot = 0; streak = 0; diff = .25;
+  applyModifier(null); kickoff(); state = 'play';
+  $('overlay').style.display = 'none';
+}
+$('go').onclick = () => { startMatch(); lockMouse(); };
+
+function addScore(pts, label){ score += pts; popup(`${label} +${pts}`); }
+function popup(text){
+  const d = document.createElement('div'); d.className = 'pop'; d.textContent = text; $('pops').appendChild(d);
+  setTimeout(() => d.remove(), 1600);
+}
+function banner(text){ const b = $('banner'); b.textContent = text; b.classList.add('on'); setTimeout(() => b.classList.remove('on'), 1300); }
+
+function goalScored(side){
+  state = 'goal'; goalTimer = 2; timeScale = .25; cheer = 2; roar();
+  for (let i = 0; i < 40; i++) puff(ball.pos, new V3((Math.random()-.5)*14, Math.random()*10, (Math.random()-.5)*14), .4, 1.5, [0xd8ff6a, 0xffb347, 0xc99bff, 0xffffff][i%4]);
+  if (side > 0){
+    goalsYou++; streak++;
+    let base = 100, label = 'GOAL';
+    const byYou = ball.lastToucher === player;
+    if (byYou && ball.wallSinceTouch){ base = 250; label = 'WALL REBOUND'; }
+    if (byYou && ball.touchPos && ball.touchPos.distanceTo(new V3(W, 0, 0)) > 22){ base = Math.max(base, 300); label = 'LONG RANGE'; }
+    if (ball.lastToucher === opp) label = 'BOT OWN GOAL';
+    const mult = 1 + (streak - 1)*.5;
+    banner('GOAL!');
+    addScore(Math.round(base*mult), label + (mult > 1 ? ` ×${mult}` : ''));
+    if (clouds.length) setTimeout(() => addScore(Math.round(200*mult), 'IN THE CLOUD'), 350);
+    diff = Math.min(1, diff + .15);
+  } else {
+    goalsBot++; streak = 0; banner('CONCEDED');
+  }
+}
+
+// ---------- input ----------
+const keys = {}; let charging = false, chargeStart = 0, mouseNdc = new THREE.Vector2(.3, 0);
+addEventListener('keydown', e => {
+  const k = e.key.toLowerCase(); keys[k] = true;
+  if (e.code === 'Space'){ e.preventDefault(); if (!e.repeat && state === 'play'){ charging = true; chargeStart = performance.now(); } }
+  if (k === 'shift' && !e.repeat && state === 'play') fart(player, aim3(), 0, true);
+});
+addEventListener('keyup', e => {
+  keys[e.key.toLowerCase()] = false;
+  if (e.code === 'Space' && charging){ charging = false; if (state === 'play') fart(player, aim3(), chargeLevel(), false); }
+});
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; charging = false; });
+// mouse look with pointer lock
+let yaw = 0, pitch = .35, camMode = 'chase', lockFailed = false;
+const cvs = renderer.domElement, SENS = .0025;
+const locked = () => document.pointerLockElement === cvs;
+function lockMouse(){ try { const r = cvs.requestPointerLock(); if (r && r.catch) r.catch(() => { lockFailed = true; }); } catch(e){ lockFailed = true; } }
+document.addEventListener('pointerlockerror', () => { lockFailed = true; });
+cvs.addEventListener('click', () => { if (state === 'play' || state === 'goal') lockMouse(); });
+addEventListener('mousemove', e => {
+  if (!(locked() || lockFailed) || state === 'menu' || state === 'over') return;
+  yaw += e.movementX*SENS;
+  pitch = THREE.MathUtils.clamp(pitch + e.movementY*SENS, -.6, 1.1);
+});
+addEventListener('keydown', e => { if (e.key.toLowerCase() === 'v' && !e.repeat) camMode = camMode === 'chase' ? 'fp' : 'chase'; });
+const fwd = () => new V3(Math.cos(yaw), 0, Math.sin(yaw));
+// launch elevation follows the camera: look up = lob, look down = low drive (or dive when airborne)
+function aimEl(){ let el = .75 - pitch*1.1; if (player.grounded) el = Math.max(.08, el); return THREE.MathUtils.clamp(el, -.9, 1.45); }
+function aim3(){ return tilt(fwd(), aimEl()); }
+const chargeLevel = () => Math.min(1, (performance.now() - chargeStart)/900);
+const ray = new THREE.Raycaster(), groundPlane = new THREE.Plane(new V3(0, 1, 0), 0), hitPt = new V3();
+
+// ---------- main loop ----------
+const camPos = new V3(-15, 5, 0), camLook = new V3();
+let last = performance.now(), clock = 0;
+function frame(now){
+  requestAnimationFrame(frame);
+  let rdt = Math.min(1/30, (now - last)/1000); last = now; clock += rdt;
+  const dt = rdt*timeScale;
+
+  if (state === 'play' || state === 'goal'){
+    // player input
+    const f = fwd(), rt = new V3(-f.z, 0, f.x);
+    player.aim.copy(f);
+    const fb = (keys.w||keys.arrowup?1:0) - (keys.s||keys.arrowdown?1:0), lr = (keys.d||keys.arrowright?1:0) - (keys.a||keys.arrowleft?1:0);
+    const w = f.clone().multiplyScalar(fb).addScaledVector(rt, lr);
+    player.walk.copy(w.lengthSq() ? w.normalize() : w);
+    if (state === 'play') aiUpdate(dt); else opp.walk.set(0, 0, 0);
+
+    for (let i = 0; i < 3; i++) step(dt/3);
+    for (const e of [player, opp]) e.gas = Math.min(100, e.gas + 16*dt);
+    slamCd -= dt;
+
+    if (state === 'play'){
+      timeLeft -= dt;
+      if (ball.pos.x > W + ball.r*.5) goalScored(1);
+      else if (ball.pos.x < -W - ball.r*.5) goalScored(-1);
+      if (timeLeft <= 0 && state === 'play') endMatch();
+    } else {
+      goalTimer -= rdt; if (goalTimer < 1.2) timeScale = Math.min(1, timeScale + rdt*2);
+      if (goalTimer <= 0){ timeScale = 1; kickoff(); applyModifier(Math.random() < .6 ? MODS[Math.floor(Math.random()*MODS.length)] : null); state = 'play'; if (modifier) popup(modifier); }
+    }
+  }
+
+  // visuals
+  for (const e of [player, opp]){
+    e.root.position.copy(e.pos);
+    const targetYaw = -Math.atan2(e.aim.z, e.aim.x);
+    let dy = targetYaw - e.root.rotation.y; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+    e.root.rotation.y += dy*Math.min(1, rdt*12);
+    let sq = e.squash; e.squash = Math.max(0, e.squash - rdt*4);
+    let s = -sq*.35;
+    if (e === player && charging){ const c = chargeLevel(); s = c*.25; e.inner.position.x = (Math.random()-.5)*.08*c; } else e.inner.position.x = 0;
+    e.inner.scale.set(1 - s*.5, 1 - s, 1 - s*.5);
+    e.mouth.scale.set(.5, .6 + (sq > 0 ? .8*sq : 0), 1.4);
+    if (!e.grounded) e.inner.rotation.z = THREE.MathUtils.lerp(e.inner.rotation.z, -Math.min(.6, Math.max(-.6, e.vel.y*.04)), .2);
+    else e.inner.rotation.z *= .8;
+  }
+  ball.mesh.position.copy(ball.pos);
+  const hs = Math.hypot(ball.vel.x, ball.vel.z);
+  if (hs > .01){ const ax = new V3(ball.vel.z, 0, -ball.vel.x).normalize(); ball.mesh.rotateOnWorldAxis(ax, hs*dt/ball.r); }
+
+  const c = charging ? chargeLevel() : 0;
+  arrow.visible = state === 'play';
+  arrow.position.set(player.pos.x, .05, player.pos.z);
+  arrow.rotation.y = -Math.atan2(player.aim.z, player.aim.x);
+  arrow.scale.set(.8 + c*1.6, 1, 1);
+  arrow.material.color.setHex(c > .95 ? 0x9be03a : 0xffe14a);
+  traj.visible = state === 'play';
+  if (traj.visible){ updateTraj(c); traj.material.opacity = charging ? .95 : .4; traj.material.color.setHex(c > .95 ? 0x9be03a : 0xffe14a); landRing.material.color.copy(traj.material.color); }
+  else landRing.visible = false;
+
+  updatePuffs(dt); updateClouds(dt);
+  cheer = Math.max(0, cheer - rdt); updateCrowd(clock);
+
+  // camera: broadcast view that tracks the action
+  const cf = fwd();
+  player.root.visible = camMode !== 'fp';
+  if (camMode === 'fp'){
+    const eye = player.pos.clone().add(new V3(0, .95, 0)).addScaledVector(cf, .35);
+    camPos.copy(eye);
+    camLook.copy(eye).addScaledVector(tilt(cf, .75 - pitch*1.1), 10);
+  } else {
+    const dist = 7.5, tgt = player.pos.clone().add(new V3(0, 1.2, 0));
+    const want = tgt.clone().addScaledVector(cf, -dist*Math.cos(pitch)).add(new V3(0, 1 + dist*Math.sin(pitch), 0));
+    want.x = THREE.MathUtils.clamp(want.x, -W - POCKET + .5, W + POCKET - .5);
+    want.z = THREE.MathUtils.clamp(want.z, -D + .4, D - .4);
+    want.y = Math.max(.6, want.y);
+    camPos.lerp(want, Math.min(1, rdt*12));
+    camLook.lerp(tgt.clone().addScaledVector(cf, 4), Math.min(1, rdt*14));
+  }
+  camShake = Math.max(0, camShake - rdt*1.5);
+  camera.position.copy(camPos).add(new V3((Math.random()-.5)*camShake, (Math.random()-.5)*camShake, 0));
+  camera.lookAt(camLook);
+
+  // HUD
+  $('score').textContent = score; $('gy').textContent = goalsYou; $('gb').textContent = goalsBot;
+  const tl = Math.max(0, Math.ceil(timeLeft)); $('time').textContent = `${Math.floor(tl/60)}:${String(tl%60).padStart(2, '0')}`;
+  $('mult').textContent = `×${1 + Math.max(0, streak)*.5} next goal`;
+  $('oppname').textContent = TIERS[Math.min(3, Math.floor(diff*4))];
+  $('lockhint').style.display = (state === 'play' && !locked() && !lockFailed) ? 'block' : 'none';
+  $('ang').textContent = Math.round(aimEl()*57.3) + '°';
+  $('gas').style.width = player.gas + '%';
+  $('chg').style.width = c*100 + '%';
+
+  renderer.render(scene, camera);
+}
+function endMatch(){
+  state = 'over'; charging = false; try { document.exitPointerLock(); } catch(e){}
+  const newBest = score > best; if (newBest){ best = score; try { localStorage.setItem('fartball-best', best); } catch(e){} }
+  $('best').textContent = best;
+  $('endtxt').innerHTML = `FULL TIME — ${goalsYou} : ${goalsBot}<br>Score ${score}${newBest ? ' · NEW BEST!' : ` · Best ${best}`}`;
+  $('go').textContent = 'PLAY AGAIN';
+  $('overlay').style.display = 'flex';
+}
+kickoff();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

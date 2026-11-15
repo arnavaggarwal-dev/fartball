@@ -1,0 +1,4 @@
+gastricdistress_bylfa_0.wav
+"Gastric Distress" by LFA, https://opengameart.org/content/gastric-distress
+License: CC0 (public domain). Downloaded 2026-11-15.
+Processed into sfx/fart_*_N.wav by tools/process_farts.py.
