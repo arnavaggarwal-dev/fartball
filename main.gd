@@ -31,6 +31,7 @@ const MY_FART_PATH := "user://my_fart.wav"
 const MY_FART_PITCH := {"Burst": 1.35, "Small": 1.12, "Mid": 1.0, "Big": 0.8}
 const MIC_GATE := 1500  # 16-bit sample level (about -27 dBFS) that counts as "fart started"
 const MY_FART_MAX := 2.0  # seconds kept after the fart starts
+const MIC_MAX_SEC := 10.0  # longest raw recording kept before trimming
 const FAN_SLICES := 3
 const MOAN_SPEED := 7.0  # m/s closing speed between you and the opponent that earns a moan
 
@@ -62,6 +63,7 @@ var mood := NEON_PINK
 var mood_target := NEON_PINK
 var stock_farts := {}  # Sfx player name -> its stock AudioStreamRandomizer
 var recording := false
+var mic_frames := PackedVector2Array()
 var fan_aps: Array[AnimationPlayer] = []
 var fan_slice := 0
 var fans_awake_until := 0  # web: fans only animate while cheering (msec)
@@ -372,27 +374,62 @@ func update_neon(rdt: float) -> void:
 
 
 # ---------- record your own fart (menu buttons, Mic bus in default_bus_layout.tres) ----------
+## The Mic bus uses AudioEffectCapture, not AudioEffectRecord: Record never fills its
+## buffer in single-threaded web builds (Godot issue #102316). While recording, every
+## frame drains the capture buffer into mic_frames; STOP turns them into a WAV.
+func mic_capture() -> AudioEffectCapture:
+	return AudioServer.get_bus_effect(AudioServer.get_bus_index("Mic"), 0)
+
+
+func pull_mic() -> void:
+	var cap := mic_capture()
+	var n := cap.get_frames_available()
+	if n > 0 and mic_frames.size() < MIC_MAX_SEC * AudioServer.get_mix_rate():
+		mic_frames.append_array(cap.get_buffer(n))
+	elif n > 0:
+		cap.clear_buffer()  # past the cap: drop, keep the buffer from filling up
+
+
+## Stereo float frames -> mono 16-bit PCM WAV.
+func frames_to_wav(frames: PackedVector2Array) -> AudioStreamWAV:
+	if frames.is_empty():
+		return null
+	var data := PackedByteArray()
+	data.resize(frames.size() * 2)
+	for i in frames.size():
+		var f := frames[i]
+		data.encode_s16(i * 2, clampi(int((f.x + f.y) * 0.5 * 32767.0), -32768, 32767))
+	var wav := AudioStreamWAV.new()  # ponytail: runtime data from the mic, not a node
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = int(AudioServer.get_mix_rate())
+	wav.stereo = false
+	wav.data = data
+	return wav
+
+
 func _on_rec_fart_pressed() -> void:
-	var rec: AudioEffectRecord = AudioServer.get_bus_effect(AudioServer.get_bus_index("Mic"), 0)
 	if not recording:
+		mic_capture().clear_buffer()
+		mic_frames.clear()
 		$Sfx/Mic.play()
-		rec.set_recording_active(true)
 		recording = true
 		%RecFart.text = "STOP"
 		%FartStatus.text = "Recording... fart into your mic, then press STOP"
 		return
-	rec.set_recording_active(false)
+	pull_mic()
 	$Sfx/Mic.stop()
 	recording = false
 	%RecFart.text = "RECORD FART"
-	var raw := rec.get_recording()
+	var got := mic_frames.size()
+	var raw := frames_to_wav(mic_frames)
+	mic_frames.clear()
 	if is_dead_silence(raw):
 		# all zeros = no mic data at all: in a browser the mic permission was refused; on the
 		# Windows desktop build, Godot's WASAPI driver can't read mics reporting >2 channels
 		if web:
-			%FartStatus.text = "Couldn't hear your mic. Allow microphone access for this page and try again"
+			%FartStatus.text = "Couldn't hear your mic (%d samples). Allow microphone access for this page and try again" % got
 		else:
-			%FartStatus.text = "Godot can't read this mic (it reports more than 2 channels).\nSet it to 2 channels: Sound > Recording > Properties > Advanced"
+			%FartStatus.text = "Godot can't read this mic (%d samples, it reports more than 2 channels).\nSet it to 2 channels: Sound > Recording > Properties > Advanced" % got
 		return
 	var clip := trim_and_normalize(raw)
 	if clip == null:
@@ -721,6 +758,8 @@ func _physics_process(dt: float) -> void:
 
 func _process(dt: float) -> void:
 	var rdt := minf(dt / Engine.time_scale, 1.0 / 30)  # real (unscaled) frame time
+	if recording:
+		pull_mic()
 	if state == "goal" and $GoalTimer.time_left < 1.2:
 		Engine.time_scale = minf(1, Engine.time_scale + rdt * 2)
 	var c := charge_level() if charging else 0.0
