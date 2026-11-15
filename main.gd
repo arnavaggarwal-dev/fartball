@@ -31,6 +31,7 @@ const MY_FART_PATH := "user://my_fart.wav"
 const MY_FART_PITCH := {"Burst": 1.35, "Small": 1.12, "Mid": 1.0, "Big": 0.8}
 const MIC_GATE := 1500  # 16-bit sample level (about -27 dBFS) that counts as "fart started"
 const MY_FART_MAX := 2.0  # seconds kept after the fart starts
+const MY_FART_MAX_GAIN := 8.0  # cap on the volume boost (+18 dB) so quiet recordings don't blow up the hiss
 const MIC_MAX_SEC := 10.0  # longest raw recording kept before trimming
 const FAN_SLICES := 3
 const MOAN_SPEED := 7.0  # m/s closing speed between you and the opponent that earns a moan
@@ -64,6 +65,7 @@ var mood_target := NEON_PINK
 var stock_farts := {}  # Sfx player name -> its stock AudioStreamRandomizer
 var recording := false
 var mic_frames := PackedVector2Array()
+var browser_rec_pending := false
 var fan_aps: Array[AnimationPlayer] = []
 var fan_slice := 0
 var fans_awake_until := 0  # web: fans only animate while cheering (msec)
@@ -97,6 +99,7 @@ func _ready() -> void:
 	crowd_idle()
 	if web:  # browser build: single-threaded wasm + WebGL, trim the costly bits
 		$StadiumLight.shadow_enabled = false
+		JavaScriptBridge.eval(BROWSER_REC_JS, true)
 	for n in MY_FART_PITCH:
 		stock_farts[n] = player.get_node("Sfx/" + n).stream
 	if FileAccess.file_exists(MY_FART_PATH):
@@ -407,29 +410,103 @@ func frames_to_wav(frames: PackedVector2Array) -> AudioStreamWAV:
 	return wav
 
 
+## Web: the browser records the mic itself (MediaRecorder), decodes it to 48 kHz mono and
+## hands Godot base64 16-bit PCM. Godot's own web mic path loops tiny chunks of audio in
+## single-threaded builds, so recordings came out as a few buzzy notes instead of a fart.
+const BROWSER_REC_JS := """
+window.fartRec = {
+  rec: null, chunks: [], stream: null, state: 'idle', b64: '', rate: 0, err: '',
+  async start(testTone) {
+    this.state = 'starting'; this.chunks = []; this.b64 = ''; this.err = '';
+    try {
+      if (testTone) {
+        const ctx = new AudioContext(); await ctx.resume();
+        const osc = ctx.createOscillator(); osc.frequency.value = 220;
+        const dest = ctx.createMediaStreamDestination(); osc.connect(dest); osc.start();
+        this.stream = dest.stream; this.toneCtx = ctx;
+      } else {
+        this.stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: false, noiseSuppression: true, autoGainControl: true}});
+      }
+      this.rec = new MediaRecorder(this.stream);
+      this.rec.ondataavailable = (e) => { if (e.data.size) this.chunks.push(e.data); };
+      this.rec.start(); this.state = 'recording';
+    } catch (e) { this.err = String(e); this.state = 'error'; }
+  },
+  stop() {
+    if (!this.rec || this.state !== 'recording') { if (this.state !== 'error') { this.err = 'mic never started'; this.state = 'error'; } return; }
+    this.state = 'processing';
+    this.rec.onstop = async () => {
+      try {
+        this.stream.getTracks().forEach((t) => t.stop());
+        if (this.toneCtx) { this.toneCtx.close(); this.toneCtx = null; }
+        const buf = await new Blob(this.chunks).arrayBuffer();
+        const audio = await new OfflineAudioContext(1, 1, 48000).decodeAudioData(buf);
+        const ch = audio.getChannelData(0);
+        const pcm = new Int16Array(ch.length);
+        for (let i = 0; i < ch.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, Math.round(ch[i] * 32767)));
+        const bytes = new Uint8Array(pcm.buffer);
+        let s = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+        this.b64 = btoa(s); this.rate = audio.sampleRate; this.state = 'done';
+      } catch (e) { this.err = String(e); this.state = 'error'; }
+    };
+    this.rec.stop();
+  }
+};
+"""
+
+
 func _on_rec_fart_pressed() -> void:
 	if not recording:
-		mic_capture().clear_buffer()
-		mic_frames.clear()
-		$Sfx/Mic.play()
+		if web:
+			JavaScriptBridge.eval("fartRec.start(!!window.fartRecTestTone)", true)
+		else:
+			mic_capture().clear_buffer()
+			mic_frames.clear()
+			$Sfx/Mic.play()
 		recording = true
 		%RecFart.text = "STOP"
 		%FartStatus.text = "Recording... fart into your mic, then press STOP"
 		return
-	pull_mic()
-	$Sfx/Mic.stop()
 	recording = false
 	%RecFart.text = "RECORD FART"
+	if web:
+		JavaScriptBridge.eval("fartRec.stop()", true)
+		browser_rec_pending = true  # _process polls until the browser has decoded it
+		%FartStatus.text = "Processing..."
+		return
+	pull_mic()
+	$Sfx/Mic.stop()
 	var got := mic_frames.size()
 	var raw := frames_to_wav(mic_frames)
 	mic_frames.clear()
+	finish_recording(raw, "%d samples" % got)
+
+
+func poll_browser_recording() -> void:
+	var st: String = str(JavaScriptBridge.eval("fartRec.state", true))
+	if st == "processing" or st == "recording" or st == "starting":
+		return
+	browser_rec_pending = false
+	if st != "done":
+		%FartStatus.text = "Couldn't record: %s. Allow microphone access for this page and try again" % str(JavaScriptBridge.eval("fartRec.err", true))
+		return
+	var wav := AudioStreamWAV.new()  # ponytail: runtime data from the mic, not a node
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = int(JavaScriptBridge.eval("fartRec.rate", true))
+	wav.stereo = false
+	wav.data = Marshalls.base64_to_raw(str(JavaScriptBridge.eval("fartRec.b64", true)))
+	finish_recording(wav, "%.1f s from the browser" % wav.get_length())
+
+
+func finish_recording(raw: AudioStreamWAV, got: String) -> void:
 	if is_dead_silence(raw):
 		# all zeros = no mic data at all: in a browser the mic permission was refused; on the
 		# Windows desktop build, Godot's WASAPI driver can't read mics reporting >2 channels
 		if web:
-			%FartStatus.text = "Couldn't hear your mic (%d samples). Allow microphone access for this page and try again" % got
+			%FartStatus.text = "Couldn't hear your mic (%s). Allow microphone access for this page and try again" % got
 		else:
-			%FartStatus.text = "Godot can't read this mic (%d samples, it reports more than 2 channels).\nSet it to 2 channels: Sound > Recording > Properties > Advanced" % got
+			%FartStatus.text = "Godot can't read this mic (%s, it reports more than 2 channels).\nSet it to 2 channels: Sound > Recording > Properties > Advanced" % got
 		return
 	var clip := trim_and_normalize(raw)
 	if clip == null:
@@ -472,36 +549,88 @@ func use_my_fart(clip: AudioStream) -> void:
 	%FartStatus.text = "Your fart is on (%.1f s)" % clip.get_length()
 
 
-## Cut the silence before the fart, keep at most MY_FART_MAX s, and boost it to full
-## level. Recordings are 16-bit PCM. Returns null if the mic heard nothing.
+## Turn a raw 16-bit mic recording into a clean fart (mono), like the stock farts were
+## processed: cut the silence before it, keep at most MY_FART_MAX s, low-pass away mic
+## hiss, gate out the background noise (measured in the quiet before the fart), boost
+## with a capped gain so hiss isn't blown up, and fade the ends. Null if nothing heard.
 func trim_and_normalize(wav: AudioStreamWAV) -> AudioStreamWAV:
-	if wav == null:
+	if wav == null or wav.data.is_empty():
 		return null
 	var d := wav.data
-	var frame := 4 if wav.stereo else 2
-	var n := d.size() / frame
+	var stereo := wav.stereo
+	var n := d.size() / (4 if stereo else 2)
+	var sr := float(wav.mix_rate)
+	var gate := MIC_GATE / 32768.0
+	var x := PackedFloat32Array()
+	x.resize(n)
 	var first := -1
 	var last := -1
-	var peak := 1
 	for i in n:
-		var v := absi(d.decode_s16(i * frame))
-		if v > MIC_GATE:
+		var v: float
+		if stereo:
+			v = (d.decode_s16(i * 4) + d.decode_s16(i * 4 + 2)) / 65536.0
+		else:
+			v = d.decode_s16(i * 2) / 32768.0
+		x[i] = v
+		if absf(v) > gate:
 			if first < 0:
 				first = i
 			last = i
-		peak = maxi(peak, v)
 	if first < 0:
 		return null
-	first = maxi(0, first - int(wav.mix_rate * 0.02))
-	last = mini(n - 1, mini(last + int(wav.mix_rate * 0.08), first + int(wav.mix_rate * MY_FART_MAX)))
-	var out := d.slice(first * frame, (last + 1) * frame)
-	var gain := 0.9 * 32767.0 / peak
-	for i in out.size() / 2:
-		out.encode_s16(i * 2, clampi(int(out.decode_s16(i * 2) * gain), -32768, 32767))
+	# work window: up to 0.5 s of lead-in (to measure the noise) + the fart itself
+	var w0 := maxi(0, first - int(sr * 0.5))
+	var a0 := maxi(0, first - int(sr * 0.02))
+	var a1 := mini(n - 1, mini(last + int(sr * 0.08), a0 + int(sr * MY_FART_MAX)))
+	# two one-pole low-passes at 4 kHz (12 dB/oct): fart energy sits well below, hiss above
+	var k := exp(-TAU * 4000.0 / sr)
+	var l1 := 0.0
+	var l2 := 0.0
+	var y := PackedFloat32Array()
+	y.resize(a1 - w0 + 1)
+	for i in y.size():
+		l1 = (1.0 - k) * x[w0 + i] + k * l1
+		l2 = (1.0 - k) * l1 + k * l2
+		y[i] = l2
+	# background noise level = RMS of the filtered lead-in (fallback: a quarter of the gate)
+	var lead := a0 - w0
+	var noise := gate * 0.25
+	if lead > int(sr * 0.05):
+		var s := 0.0
+		for i in lead:
+			s += y[i] * y[i]
+		noise = sqrt(s / lead)
+	# noise gate on an envelope follower: closed below 1.5x the noise, open from 4x
+	var lo := noise * 1.5
+	var hi := maxf(noise * 4.0, lo + 1e-4)
+	var rel := exp(-1.0 / (sr * 0.06))
+	var env := 0.0
+	var m := a1 - a0 + 1
+	var peak := 0.0
+	for i in y.size():
+		env = maxf(absf(y[i]), env * rel)
+		var g := clampf((env - lo) / (hi - lo), 0.0, 1.0)
+		y[i] *= g * g
+		if i >= lead:
+			peak = maxf(peak, absf(y[i]))
+	if peak <= 0.0:
+		return null
+	var gain := minf(0.9 / peak, MY_FART_MAX_GAIN)
+	var fade_in := maxi(1, int(sr * 0.005))
+	var fade_out := maxi(1, int(m * 0.15))
+	var out := PackedByteArray()
+	out.resize(m * 2)
+	for i in m:
+		var f := 1.0
+		if i < fade_in:
+			f = float(i) / fade_in
+		elif i > m - fade_out:
+			f = float(m - i) / fade_out
+		out.encode_s16(i * 2, clampi(int(y[lead + i] * gain * f * 32767.0), -32768, 32767))
 	var clip := AudioStreamWAV.new()  # ponytail: runtime data from the mic, not a node
 	clip.format = AudioStreamWAV.FORMAT_16_BITS
 	clip.mix_rate = wav.mix_rate
-	clip.stereo = wav.stereo
+	clip.stereo = false
 	clip.data = out
 	return clip
 
@@ -758,8 +887,10 @@ func _physics_process(dt: float) -> void:
 
 func _process(dt: float) -> void:
 	var rdt := minf(dt / Engine.time_scale, 1.0 / 30)  # real (unscaled) frame time
-	if recording:
+	if recording and not web:
 		pull_mic()
+	if browser_rec_pending:
+		poll_browser_recording()
 	if state == "goal" and $GoalTimer.time_left < 1.2:
 		Engine.time_scale = minf(1, Engine.time_scale + rdt * 2)
 	var c := charge_level() if charging else 0.0
